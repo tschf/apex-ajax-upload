@@ -186,32 +186,6 @@ wwv_flow_api.create_plugin_attribute (
  ,p_is_translatable => false
  ,p_help_text => 'Specify the region name to refresh after inserting files. i.e. report of files. Region name should match exactly and must be unique for the current page.'
   );
-wwv_flow_api.create_plugin_attribute (
-  p_id => 10892056251869159671 + wwv_flow_api.g_id_offset
- ,p_flow_id => wwv_flow.g_flow_id
- ,p_plugin_id => 7175991401368815 + wwv_flow_api.g_id_offset
- ,p_attribute_scope => 'COMPONENT'
- ,p_attribute_sequence => 9
- ,p_display_sequence => 90
- ,p_prompt => 'yn1'
- ,p_attribute_type => 'CHECKBOX'
- ,p_is_required => false
- ,p_default_value => 'N'
- ,p_is_translatable => false
-  );
-wwv_flow_api.create_plugin_attribute (
-  p_id => 10892057855332160648 + wwv_flow_api.g_id_offset
- ,p_flow_id => wwv_flow.g_flow_id
- ,p_plugin_id => 7175991401368815 + wwv_flow_api.g_id_offset
- ,p_attribute_scope => 'COMPONENT'
- ,p_attribute_sequence => 10
- ,p_display_sequence => 100
- ,p_prompt => 'yn2'
- ,p_attribute_type => 'CHECKBOX'
- ,p_is_required => false
- ,p_default_value => 'N'
- ,p_is_translatable => false
-  );
 null;
  
 end;
