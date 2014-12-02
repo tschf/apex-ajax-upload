@@ -5,7 +5,7 @@ create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
         l_region_id varchar2(200);
     BEGIN
 
-        select '#R'||region_id into l_region_id
+        select coalesce(static_id, 'R'||region_id) into l_region_id
         from apex_application_page_regions
         where page_id = apex_application.g_flow_step_id and
         application_id = apex_application.g_flow_id and
@@ -17,7 +17,7 @@ create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
             WHEN
                 NO_DATA_FOUND
                     THEN
-                        RETURN NULL;--if the region isnot found, simply no region will be refreshed
+                        RETURN NULL;
     
     END get_region_id;
 
@@ -140,10 +140,9 @@ create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
                     #x01#
                     #x02#
                 },
-                function success(){ 
+                function success(data, textStatus){ 
                     $('##report_region_id#').trigger('apexrefresh');
                     uploadFiles();//do the next file
-                
                 });
             
         }
@@ -158,8 +157,6 @@ create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
         l_js_code := replace(l_js_code, '#p_instance#', apex_javascript.add_attribute('p_instance', apex_util.get_session_State('APP_SESSION'),true,true));
         l_js_code := replace(l_js_code, '#x01#', replace(apex_javascript.add_attribute('x01', 'currFile.name'), '"', ''));
         l_js_code := replace(l_js_code, '#x02#', replace(apex_javascript.add_attribute('x02', 'currFile.type'), '"', ''));
-    
-        insert into debug_msg values (l_js_code);
     
         apex_javascript.add_inline_code(
             p_code => l_js_code
