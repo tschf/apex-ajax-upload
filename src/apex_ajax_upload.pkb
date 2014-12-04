@@ -1,6 +1,11 @@
 create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
 
-    CHUNK_SIZE CONSTANT NUMBER := 32767;
+    CHUNK_SIZE CONSTANT NUMBER := 20000;
+    POST_SIZE CONSTANT NUMBER := 300000;
+    
+    UPLOADING_CMD CONSTANT NUMBER := 1;
+    SAVE_CMD CONSTANT NUMBER := 2;
+    
     
 
     function get_region_id(p_region_name in varchar2) return varchar2
@@ -58,9 +63,9 @@ create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
     AS
         l_result apex_plugin.t_page_item_render_result;
         l_ajax_ident varchar2(255);
-        l_report_region_id varchar2(200);
+        l_report_region_id p_item.attribute_08%type;
         
-        l_js_code varchar2(4000);
+        l_js_code varchar2(8000);
     BEGIN
     
         l_ajax_ident := apex_plugin.get_ajax_identifier;
@@ -77,82 +82,109 @@ create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
         
         l_js_code := q'!
         
-        var fileList;
-        var currFile;
-        var gIndex;
+        var _completeTransfers;
         
         function uploadFiles(fileList){
+           
+            $x_Show('AjaxLoading');
+            _completeTransfers = 0;
+           
+            for (var j = 0; j < fileList.length; j++){
+                var thisFile = fileList[j];
             
-            
-            //step 1. check if file list was passed in. if it was, set the global variable				
-            if(fileList != null){
-                $x_Show('AjaxLoading');
-                this.fileList = fileList;
-                gIndex = 0;
-            }
-            
-            //no more files to read
-            if (gIndex >= this.fileList.length){
-                $x_Hide('AjaxLoading');
-                $('##item_name#').val('');
-                return;
-            }
-            
-            //step 2. check the global file list exists. if it does get the the current file
-            if (this.fileList != null){
-                currFile = this.fileList[gIndex++];
+                var reader = new FileReader();
                 
+                //Example adapted from: http://www.html5rocks.com/en/tutorials/file/dndfiles/#toc-reading-files
+                reader.onload = (function(theFile){
+                    return function(e) {
+                        
+                        doUpload(e.target.result, theFile.name, theFile.type, fileList.length);
+                    
+                    };
+                })(thisFile);
                 
-                var fileReader = new FileReader();
-                fileReader.onload = addToCollection;
-                fileReader.readAsDataURL(currFile);
-            }
+                reader.readAsDataURL(thisFile)
+                
             
+            }
         }
         
-        function addToCollection(e){
+        
+        function doUpload(base64, fileName, mimeType, totalFiles){
+        
+        
             
-            var base64 = e.target.result;
             var totalLen = base64.length;
+            
             var chunkSize = #CHUNK_SIZE#;
-            var startIndex = 0;
-            var currentChunk;
-            var fArray = new Array();
+            var postSize = #POST_SIZE#;
             
-            while (startIndex < totalLen){
+            var UPLOADING_CMD = #UPLOADING_CMD#;
+            var SAVE_CMD = #SAVE_CMD#;
+            var refreshRegion = '#report_region_id#';
             
-                currentChunk = base64.substr(startIndex, chunkSize);
+            var filePieces = Math.floor(totalLen/postSize)+1;
+            
+            for(var i = 0; i < filePieces; i++){
+            
+                var currentPiece = base64.substr(i*postSize, postSize);
+            
+                var currentCmd = (i+1 == filePieces) ? SAVE_CMD : UPLOADING_CMD;
+                var chunkIndex = 0;
+                var fArray = new Array();
+                var pieceLen = currentPiece.length;
                 
-                fArray.push(currentChunk);
-                
-                startIndex += chunkSize;
-            
-            }
-            
-            $.post(
-                'wwv_flow.show',  
-                {
-                    #p_request#
-                    #p_flow_id#
-                    #p_flow_step_id#
-                    #p_instance#
-                    #x01#
-                    #x02#
-                    #f01#
-                },
-                function s(d,s) {
-                    $('##report_region_id#').trigger('apexrefresh');
-                    uploadFiles();//do the next file
+                while (chunkIndex < pieceLen){
+                    var fbit = currentPiece.substr(chunkIndex, chunkSize);
+                    fArray.push(fbit);
+                    chunkIndex += chunkSize;   
                 }
-            );
-            
-            
-            
+                
+                $.ajax({
+                    type: 'POST',
+                    url: 'wwv_flow.show',
+                    data: {
+                        #p_request#
+                        #p_flow_id#
+                        #p_flow_step_id#
+                        #p_instance#
+                        #x01#
+                        #x02#
+                        #x03#
+                        #x04#
+                        #f01#
+                    },
+                    success: function() {
+                        
+                        
+                        
+                        if (i == (filePieces-1)){
+                            _completeTransfers++;
+                            
+                            
+                            
+                            if (_completeTransfers == totalFiles){
+                            
+                                $x_Hide('AjaxLoading');
+                                
+                                if (refreshRegion){
+                                    $('#' + refreshRegion).trigger('apexrefresh');
+                                }
+                            
+                            }
+                        }
+                    },
+                    async:false
+                });
+            }
         }
         
         !';
         
         l_js_code := replace(l_js_code, '#CHUNK_SIZE#', CHUNK_SIZE);
+        l_js_code := replace(l_js_code, '#POST_SIZE#', POST_SIZE);
+        l_js_code := replace(l_js_code, '#UPLOADING_CMD#', UPLOADING_CMD);
+        l_js_code := replace(l_js_code, '#SAVE_CMD#', SAVE_CMD);
         l_js_code := replace(l_js_code, '#item_name#', p_item.name);
         l_js_code := replace(l_js_code, '#report_region_id#', l_report_region_id);
         l_js_code := replace(l_js_code, '#p_request#', apex_javascript.add_attribute('p_request','PLUGIN=' || l_ajax_ident));
@@ -160,8 +192,10 @@ create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
         l_js_code := replace(l_js_code, '#p_flow_step_id#', apex_javascript.add_attribute('p_flow_step_id', apex_application.g_flow_step_id));
         l_js_code := replace(l_js_code, '#p_instance#', apex_javascript.add_attribute('p_instance', apex_util.get_session_State('APP_SESSION')));
         
-        l_js_code := replace(l_js_code, '#x01#', replace(apex_javascript.add_attribute('x01', 'currFile.name'), '"', ''));
-        l_js_code := replace(l_js_code, '#x02#', replace(apex_javascript.add_attribute('x02', 'currFile.type'), '"', ''));
+        l_js_code := replace(l_js_code, '#x01#', replace(apex_javascript.add_attribute('x01', 'fileName'), '"', ''));
+        l_js_code := replace(l_js_code, '#x02#', replace(apex_javascript.add_attribute('x02', 'mimeType'), '"', ''));
+        l_js_code := replace(l_js_code, '#x03#', replace(apex_javascript.add_attribute('x03', 'i'), '"', ''));
+        l_js_code := replace(l_js_code, '#x04#', replace(apex_javascript.add_attribute('x04', 'currentCmd'), '"', ''));
         l_js_code := replace(l_js_code, '#f01#', replace(apex_javascript.add_attribute('f01', 'fArray', true, false), '"', ''));
     
         apex_javascript.add_inline_code(
@@ -187,64 +221,144 @@ create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
         p_item   in apex_plugin.t_page_item,
         p_plugin in apex_plugin.t_plugin )
     return apex_plugin.t_page_item_ajax_result
-    AS
-        
-    
-        
+    AS  
         l_result apex_plugin.t_page_item_ajax_result;
         
-        
-        
+        --item attributes
         l_table_name p_item.attribute_01%type := p_item.attribute_01;
-        l_filename p_item.attribute_02%type := p_item.attribute_02;
-        l_mime_type p_item.attribute_03%type := p_item.attribute_03;
-        l_blob_column p_item.attribute_04%type := p_item.attribute_04;
+        l_filename_col p_item.attribute_02%type := p_item.attribute_02;
+        l_mime_type_col p_item.attribute_03%type := p_item.attribute_03;
+        l_blob_col p_item.attribute_04%type := p_item.attribute_04;
         l_foreign_key_item p_item.attribute_06%type := p_item.attribute_06;
         l_foreign_key_column p_item.attribute_07%type := p_item.attribute_07;
+        
+        --constants
+        c_foreign_key_col constant varchar2(20) := '#FOREIGN_KEY_COL#';
+        c_foreign_key_col_replace constant varchar2(20) := ',' || l_foreign_key_column;
+        
+        c_foreign_key_val constant varchar2(20) := '#FOREIGN_KEY_VAL#';
+        c_foreign_key_val_replace constant varchar2(5) := ',:4';       
+        
+        C_FIRST_PIECE CONSTANT NUMBER := 0;
+        C_FILE_PIECES_LIMIT CONSTANT NUMBER := 10;
+         
     
+        --dynamic SQL
+        l_insert_stmt varchar2(4000) := 'insert into ' ||  l_table_name || ' (' || l_filename_col || ',' || l_mime_type_col || ',' || l_blob_col || c_foreign_key_col || ') values (:1, :2, :3' || c_foreign_key_val || ')';
+        l_insert_stmt2 varchar2(4000) := 'insert into ' ||  l_table_name || ' (' || l_filename_col || ',' || l_mime_type_col || ',' || l_blob_col || ') values (:1, :2, :3)';
         
-        c_foreign_key_col constant varchar2(200) := '#FOREIGN_KEY_COL#';
-        c_foreign_key_col_replace constant varchar2(200) := ',' || l_foreign_key_column;
+        --AJAX input
+        l_filename varchar2(255);
+        l_mime_type varchar2(255);
+        l_post_index NUMBER;
+        l_current_cmd NUMBER;
         
-        c_foreign_key_val constant varchar2(200) := '#FOREIGN_KEY_VAL#';
-        c_foreign_key_val_replace constant varchar2(200) := ',:4';
+        --custom types
+        CURSOR file_collection is
+        select 
+          seq_id
+        , c001 filename
+        , c002 mime_type
+        , n001 post_index
+        , dbms_lob.getlength(clob001) clob_len
+        , clob001 base64_Data
+        from apex_collections
+        where collection_name = COLLECTION_NAME
+        order by n001;
         
-        l_insert_stmt varchar2(4000) := 'insert into ' ||  l_table_name || ' (' || l_filename || ',' || l_mime_type || ',' || l_blob_column || c_foreign_key_col || ') values (:1, :2, :3' || c_foreign_key_val || ')';
-        l_insert_stmt2 varchar2(4000) := 'insert into ' ||  l_table_name || ' (' || l_filename || ',' || l_mime_type || ',' || l_blob_column || ') values (:1, :2, :3)';
+        type t_file_pieces is table of file_collection%rowtype
+        index by PLS_INTEGER;
         
-        l_data CLOB;
+        --output
+        l_file_pieces t_file_pieces;
+        l_data_chunk CLOB;
+        l_whole_data CLOB;
         l_blob BLOB;
         
-        l_cnt NUMBER;
+        l_error varchar2(4000);
+        
     BEGIN
     
-        l_cnt := apex_application.g_f01.COUNT;
+        l_filename := apex_application.g_x01;
+        l_mime_type := apex_application.g_x02;
+        l_post_index := apex_application.g_x03;
+        l_current_cmd := apex_application.g_x04;
     
-        dbms_lob.createtemporary(l_data, false, dbms_lob.session);
+        dbms_lob.createtemporary(l_data_chunk, false);
         
         for i in 1..apex_application.g_f01.COUNT
         LOOP
         
             dbms_lob.writeappend(
-                lob_loc => l_data
+                lob_loc => l_data_chunk
               , amount => dbms_lob.getlength(apex_application.g_f01(i))
               , buffer => apex_application.g_f01(i)
             );
         
         END LOOP;
         
-        l_blob := apex_web_service.clobbase642blob(get_binary_data(l_data));
+        if l_post_index = C_FIRST_PIECE
+        then
         
+            apex_collection.create_or_truncate_collection(COLLECTION_NAME);
         
-        IF l_foreign_key_item IS NOT NULL THEN --replace substitutions with actual values
-            l_insert_stmt := REPLACE(l_insert_stmt, c_foreign_key_col, c_foreign_key_col_replace);
-            l_insert_stmt := REPLACE(l_insert_stmt, c_foreign_key_val, c_foreign_key_val_replace);
-            execute immediate l_insert_stmt using apex_application.g_x01, apex_application.g_x02, l_blob, v(l_foreign_key_item);
-        ELSE --replace with empty strings
-            l_insert_stmt := REPLACE(l_insert_stmt, c_foreign_key_col, '');
-            l_insert_stmt := REPLACE(l_insert_stmt, c_foreign_key_val, '');
-            execute immediate l_insert_stmt using apex_application.g_x01, apex_application.g_x02, l_blob;
-        END IF;
+        end if;
+        
+        dbms_lob.createtemporary(l_whole_data, false);
+        
+        if l_current_cmd = UPLOADING_CMD
+        then
+            apex_collection.add_member(
+                p_collection_name => COLLECTION_NAME
+              , p_c001 => l_filename
+              , p_c002 => l_mime_type
+              , p_n001 => l_post_index
+              , p_clob001 => l_data_chunk
+            );
+            
+            
+        elsif l_current_cmd = SAVE_CMD
+        then
+            open file_collection;
+            loop
+                fetch file_collection
+                    bulk collect into l_file_pieces limit C_FILE_PIECES_LIMIT;
+            
+                for i in 1..l_file_pieces.COUNT
+                LOOP
+                    dbms_lob.append(
+                        dest_lob => l_whole_data
+                      , src_lob => l_file_pieces(i).base64_Data
+                    );
+                END LOOP;
+            
+                exit when l_file_pieces.COUNT < C_FILE_PIECES_LIMIT;
+                
+            end loop;
+            
+            close file_collection;
+            
+            
+            
+            dbms_lob.append(
+                dest_lob => l_whole_data
+              , src_lob => l_data_chunk
+            );
+            
+            l_blob := apex_web_service.clobbase642blob(get_binary_data(l_whole_data));
+            
+            IF l_foreign_key_item IS NOT NULL THEN --replace substitutions with actual values
+                l_insert_stmt := REPLACE(l_insert_stmt, c_foreign_key_col, c_foreign_key_col_replace);
+                l_insert_stmt := REPLACE(l_insert_stmt, c_foreign_key_val, c_foreign_key_val_replace);
+                execute immediate l_insert_stmt using apex_application.g_x01, apex_application.g_x02, l_blob, v(l_foreign_key_item);
+            ELSE --replace with empty strings
+                l_insert_stmt := REPLACE(l_insert_stmt, c_foreign_key_col, '');
+                l_insert_stmt := REPLACE(l_insert_stmt, c_foreign_key_val, '');
+                execute immediate l_insert_stmt using apex_application.g_x01, apex_application.g_x02, l_blob;
+            END IF;
+            
+        end if;
+        
         
         return l_result;
     END add_file;
