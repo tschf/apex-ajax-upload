@@ -89,7 +89,7 @@ create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
             $x_Show('AjaxLoading');
             _completeTransfers = 0;
            
-            for (var j = 0; j < fileList.length; j++){
+            for (var j = 0, fileIndex = 0; j < fileList.length; j++){
                 var thisFile = fileList[j];
             
                 var reader = new FileReader();
@@ -97,8 +97,8 @@ create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
                 //Example adapted from: http://www.html5rocks.com/en/tutorials/file/dndfiles/#toc-reading-files
                 reader.onload = (function(theFile){
                     return function(e) {
-                        
-                        doUpload(e.target.result, theFile.name, theFile.type, fileList.length);
+                        console.log(theFile);
+                        doUpload(fileIndex++, 0, e.target.result, theFile.name, theFile.type, fileList.length);
                     
                     };
                 })(thisFile);
@@ -110,10 +110,10 @@ create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
         }
         
         
-        function doUpload(base64, fileName, mimeType, totalFiles){
+        function doUpload(fileIndex, piece, base64, fileName, mimeType, totalFiles){
         
         
-            
+            var itemName = '#item_name#';
             var totalLen = base64.length;
             
             var chunkSize = #CHUNK_SIZE#;
@@ -125,58 +125,57 @@ create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
             
             var filePieces = Math.floor(totalLen/postSize)+1;
             
-            for(var i = 0; i < filePieces; i++){
+            var currentPiece = base64.substr(piece*postSize, postSize);
+        
+            var currentCmd = (piece+1 == filePieces) ? SAVE_CMD : UPLOADING_CMD;
             
-                var currentPiece = base64.substr(i*postSize, postSize);
+            var chunkIndex = 0;
+            var fArray = new Array();
+            var pieceLen = currentPiece.length;
             
-                var currentCmd = (i+1 == filePieces) ? SAVE_CMD : UPLOADING_CMD;
-                var chunkIndex = 0;
-                var fArray = new Array();
-                var pieceLen = currentPiece.length;
-                
-                while (chunkIndex < pieceLen){
-                    var fbit = currentPiece.substr(chunkIndex, chunkSize);
-                    fArray.push(fbit);
-                    chunkIndex += chunkSize;   
-                }
-                
-                $.ajax({
-                    type: 'POST',
-                    url: 'wwv_flow.show',
-                    data: {
-                        #p_request#
-                        #p_flow_id#
-                        #p_flow_step_id#
-                        #p_instance#
-                        #x01#
-                        #x02#
-                        #x03#
-                        #x04#
-                        #f01#
-                    },
-                    success: function() {
-                        
-                        
-                        
-                        if (i == (filePieces-1)){
-                            _completeTransfers++;
-                            
-                            
-                            
-                            if (_completeTransfers == totalFiles){
-                            
-                                $x_Hide('AjaxLoading');
-                                
-                                if (refreshRegion){
-                                    $('#' + refreshRegion).trigger('apexrefresh');
-                                }
-                            
+            while (chunkIndex < pieceLen){
+                var fbit = currentPiece.substr(chunkIndex, chunkSize);
+                fArray.push(fbit);
+                chunkIndex += chunkSize;   
+            }
+            
+            $.ajax({
+                type: 'POST',
+                url: 'wwv_flow.show',
+                data: {
+                    #p_request#
+                    #p_flow_id#
+                    #p_flow_step_id#
+                    #p_instance#
+                    #x01#
+                    #x02#
+                    #x03#
+                    #x04#
+                    #x05#
+                    #f01#
+                },
+                success: function() {
+                    
+                    if ( piece++ < filePieces  ){
+                    
+                        doUpload(fileIndex, piece, base64, fileName, mimeType, totalFiles);
+                        if (refreshRegion){
+                            $('#' + refreshRegion).trigger('apexrefresh');
+                        } 
+                    
+                    } else {
+                    
+                        if (++_completeTransfers == totalFiles){
+                            $x_Hide('AjaxLoading');  
+                            if (itemName) {
+                                $('#' + itemName).val('');
                             }
                         }
-                    },
-                    async:false
-                });
-            }
+                    
+                    }
+                },
+                async:true
+            });
         }
         
         !';
@@ -194,14 +193,14 @@ create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
         
         l_js_code := replace(l_js_code, '#x01#', replace(apex_javascript.add_attribute('x01', 'fileName'), '"', ''));
         l_js_code := replace(l_js_code, '#x02#', replace(apex_javascript.add_attribute('x02', 'mimeType'), '"', ''));
-        l_js_code := replace(l_js_code, '#x03#', replace(apex_javascript.add_attribute('x03', 'i'), '"', ''));
+        l_js_code := replace(l_js_code, '#x03#', replace(apex_javascript.add_attribute('x03', 'piece'), '"', ''));
         l_js_code := replace(l_js_code, '#x04#', replace(apex_javascript.add_attribute('x04', 'currentCmd'), '"', ''));
+        l_js_code := replace(l_js_code, '#x05#', replace(apex_javascript.add_attribute('x05', 'fileIndex'), '"', ''));
         l_js_code := replace(l_js_code, '#f01#', replace(apex_javascript.add_attribute('f01', 'fArray', true, false), '"', ''));
     
         apex_javascript.add_inline_code(
             p_code => l_js_code
         );
-        
     
         sys.htp.p('<div id="AjaxLoading" style="display:none;position:absolute;left:45%;top:45%;padding:10px;border:2px solid black;background:#FFF;" > Uploading..... <br /><img src="' || apex_application.g_image_prefix || 'processing3.gif" /></div>');
         sys.htp.p('<input type="file" id="' || p_item.name || '" value="' || p_value || '" multiple />');
@@ -251,7 +250,9 @@ create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
         l_filename varchar2(255);
         l_mime_type varchar2(255);
         l_post_index NUMBER;
+        l_file_index NUMBER;
         l_current_cmd NUMBER;
+        l_collection_name apex_collections.collection_name%type;
         
         --custom types
         CURSOR file_collection is
@@ -263,7 +264,7 @@ create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
         , dbms_lob.getlength(clob001) clob_len
         , clob001 base64_Data
         from apex_collections
-        where collection_name = COLLECTION_NAME
+        where collection_name = l_collection_name
         order by n001;
         
         type t_file_pieces is table of file_collection%rowtype
@@ -283,6 +284,9 @@ create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
         l_mime_type := apex_application.g_x02;
         l_post_index := apex_application.g_x03;
         l_current_cmd := apex_application.g_x04;
+        l_file_index := apex_application.g_x05;
+        
+        l_collection_name := COLLECTION_NAME||l_file_index;
     
         dbms_lob.createtemporary(l_data_chunk, false);
         
@@ -300,7 +304,7 @@ create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
         if l_post_index = C_FIRST_PIECE
         then
         
-            apex_collection.create_or_truncate_collection(COLLECTION_NAME);
+            apex_collection.create_or_truncate_collection(l_collection_name);
         
         end if;
         
@@ -309,7 +313,7 @@ create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
         if l_current_cmd = UPLOADING_CMD
         then
             apex_collection.add_member(
-                p_collection_name => COLLECTION_NAME
+                p_collection_name => l_collection_name
               , p_c001 => l_filename
               , p_c002 => l_mime_type
               , p_n001 => l_post_index
@@ -356,6 +360,8 @@ create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
                 l_insert_stmt := REPLACE(l_insert_stmt, c_foreign_key_val, '');
                 execute immediate l_insert_stmt using apex_application.g_x01, apex_application.g_x02, l_blob;
             END IF;
+            
+            apex_collection.delete_collection(l_collection_name);
             
         end if;
         

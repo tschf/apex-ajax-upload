@@ -89,7 +89,7 @@ wwv_flow_api.create_plugin (
  ,p_standard_attributes => 'VISIBLE'
  ,p_substitute_attributes => true
  ,p_subscribe_plugin_settings => true
- ,p_version_identifier => '1.0.1'
+ ,p_version_identifier => '2.0.1'
   );
 wwv_flow_api.create_plugin_attribute (
   p_id => 7176163959379794 + wwv_flow_api.g_id_offset
