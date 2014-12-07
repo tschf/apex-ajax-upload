@@ -1,5 +1,7 @@
 create or replace PACKAGE APEX_AJAX_UPLOAD AS 
   
+    COLLECTION_NAME CONSTANT VARCHAR2(20) := 'AJAX_UPLOAD';
+  
     function render_file_item(
         p_item                in apex_plugin.t_page_item,
         p_plugin              in apex_plugin.t_plugin,
