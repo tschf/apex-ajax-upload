@@ -3,8 +3,11 @@ create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
     CHUNK_SIZE CONSTANT NUMBER := 20000;
     POST_SIZE CONSTANT NUMBER := 300000;
     
+    MAX_PROGRESS_BARS CONSTANT NUMBER := 5;
+    
     UPLOADING_CMD CONSTANT NUMBER := 1;
     SAVE_CMD CONSTANT NUMBER := 2;
+    CANCEL_CMD CONSTANT NUMBER := 3;
     
     
 
@@ -82,12 +85,98 @@ create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
         
         l_js_code := q'!
         
-        var _completeTransfers;
+        var _completeTransfers,
+            _totalProgressBar,
+            _isUploading = false;
+            
+        function isShowProgressBar(fileIndex, fileListSize){
+        
+        
+            var isAdded = (uploaderJQuery('#file' + fileIndex + 'progressBar').size() > 0 );
+            var notExceedMax = (fileListSize <= #MAX_PROGRESS_BARS#);
+            return !(isAdded) && notExceedMax;
+        
+        }
+            
+        function updateNthProgressBar(n, val){
+        
+            uploaderJQuery('#file' + n + 'progressBar').progressbar("option", "value", val)
+        
+        }
+            
+        function addNewProgressBar( fileIndex, fileName){
+        
+            
+        
+            var htmlCode = getNewProgressCode(fileIndex, fileName);
+            apex.jQuery('#individualProgress').append(htmlCode);
+            
+            uploaderJQuery('#file' + fileIndex + 'progressBar').progressbar({value: false});
+        
+        }
+            
+        function getNewProgressCode(fileIndex, fileName){
+        
+            var html;
+            html = '<div id="file' + fileIndex + 'progressBar" class="progressBar">';
+            html += '<div class="progressLabel">' + fileName + '</div>';
+            html += '</div>'
+        
+        
+            return html;
+        }
+        
+        
+        function showProgressBar(n){
+        
+            apex.jQuery('#totalNumFiles').text(n)
+        
+            if(!(_totalProgressBar))
+                _totalProgressBar = uploaderJQuery('#totalProgressBar');
+        
+            apex.jQuery('#progressDialog').dialog({
+            
+                dialogClass: "progressDialog",
+                buttons: [
+                    {
+                        "text" : "Cancel Upload(s)",
+                        "click" : function() { _isUploading = false; apex.jQuery(this).dialog("close");}       
+                    }
+                ],
+                position: {
+                    my: 'center',
+                    at: 'top'
+                    
+                }
+            });
+            
+            _totalProgressBar.progressbar({
+                value: false
+              , complete: function() {
+                apex.jQuery('#progressDialog').dialog("option", "buttons", [{ text: "Close", click: function() { hideProgressBar(); } }])
+              }
+            });
+            
+        }
+        
+        function hideProgressBar(){
+        
+            apex.jQuery('#progressDialog').dialog("close");
+            apex.jQuery('#individualProgress').empty();
+        
+        }
         
         function uploadFiles(fileList){
            
-            $x_Show('AjaxLoading');
+            showProgressBar(fileList.length);
             _completeTransfers = 0;
+            _isUploading = true;
+            
+            if (fileList.length >= 2)
+                apex.jQuery('#totalProgressBar').show();
+            else
+                apex.jQuery('#totalProgressBar').hide();
+             
            
             for (var j = 0, fileIndex = 0; j < fileList.length; j++){
                 var thisFile = fileList[j];
@@ -97,7 +186,6 @@ create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
                 //Example adapted from: http://www.html5rocks.com/en/tutorials/file/dndfiles/#toc-reading-files
                 reader.onload = (function(theFile){
                     return function(e) {
-                        console.log(theFile);
                         doUpload(fileIndex++, 0, e.target.result, theFile.name, theFile.type, fileList.length);
                     
                     };
@@ -112,6 +200,9 @@ create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
         
         function doUpload(fileIndex, piece, base64, fileName, mimeType, totalFiles){
         
+            if (isShowProgressBar(fileIndex, totalFiles)) {
+                addNewProgressBar(fileIndex, fileName);
+            }
         
             var itemName = '#item_name#';
             var totalLen = base64.length;
@@ -121,13 +212,18 @@ create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
             
             var UPLOADING_CMD = #UPLOADING_CMD#;
             var SAVE_CMD = #SAVE_CMD#;
+            var CANCEL_CMD = #CANCEL_CMD#;
             var refreshRegion = '#report_region_id#';
             
             var filePieces = Math.floor(totalLen/postSize)+1;
             
             var currentPiece = base64.substr(piece*postSize, postSize);
         
-            var currentCmd = (piece+1 == filePieces) ? SAVE_CMD : UPLOADING_CMD;
+            if (_isUploading == false)
+                currentCmd = CANCEL_CMD;
+            else 
+                currentCmd = (piece+1 == filePieces) ? SAVE_CMD : UPLOADING_CMD;
+            
             
             var chunkIndex = 0;
             var fArray = new Array();
@@ -139,43 +235,64 @@ create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
                 chunkIndex += chunkSize;   
             }
             
-            $.ajax({
-                type: 'POST',
-                url: 'wwv_flow.show',
-                data: {
-                    #p_request#
-                    #p_flow_id#
-                    #p_flow_step_id#
-                    #p_instance#
-                    #x01#
-                    #x02#
-                    #x03#
-                    #x04#
-                    #x05#
-                    #f01#
-                },
-                success: function() {
+            if (_isUploading){
+                apex.jQuery.ajax({
+                    type: 'POST',
+                    url: 'wwv_flow.show',
+                    data: {
+                        #p_request#
+                        #p_flow_id#
+                        #p_flow_step_id#
+                        #p_instance#
+                        #x01#
+                        #x02#
+                        #x03#
+                        #x04#
+                        #x05#
+                        #f01#
+                    },
+                    success: function() {
                     
-                    if ( piece++ < filePieces  ){
-                    
-                        doUpload(fileIndex, piece, base64, fileName, mimeType, totalFiles);
-                        if (refreshRegion){
-                            $('#' + refreshRegion).trigger('apexrefresh');
-                        } 
-                    
-                    } else {
-                    
-                        if (++_completeTransfers == totalFiles){
-                            $x_Hide('AjaxLoading');  
-                            if (itemName) {
-                                $('#' + itemName).val('');
+                        updateNthProgressBar(fileIndex, (++piece/filePieces)*100);
+                                                
+                        if ( piece < filePieces  ){
+                            doUpload(fileIndex, piece, base64, fileName, mimeType, totalFiles); 
+                        
+                        } else {
+                        
+                            ++_completeTransfers;
+                            
+                            if (refreshRegion){
+                                apex.jQuery('#' + refreshRegion).trigger('apexrefresh');
                             }
+                            
+                            _totalProgressBar.progressbar("value", (_completeTransfers / totalFiles) * 100);
+                        
+                            if (_completeTransfers == totalFiles){
+                                if (itemName) {
+                                    apex.jQuery('#' + itemName).val('');
+                                }
+                            }
+                        
                         }
-                    
-                    }
-                },
-                async:true
-            });
+                    },
+                    async:true
+                });
+            } else {
+                apex.jQuery({
+                    type: 'POST',
+                    url: 'wwv_flow.show',
+                    data: {
+                        #p_request#
+                        #p_flow_id#
+                        #p_flow_step_id#
+                        #p_instance#
+                        #x04#
+                    },
+                    async: true
+                });    
+            }
+            
         }
         
         !';
@@ -183,7 +300,9 @@ create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
         l_js_code := replace(l_js_code, '#CHUNK_SIZE#', CHUNK_SIZE);
         l_js_code := replace(l_js_code, '#POST_SIZE#', POST_SIZE);
         l_js_code := replace(l_js_code, '#UPLOADING_CMD#', UPLOADING_CMD);
+        l_js_code := replace(l_js_code, '#MAX_PROGRESS_BARS#', MAX_PROGRESS_BARS);
         l_js_code := replace(l_js_code, '#SAVE_CMD#', SAVE_CMD);
+        l_js_code := replace(l_js_code, '#CANCEL_CMD#', CANCEL_CMD);
         l_js_code := replace(l_js_code, '#item_name#', p_item.name);
         l_js_code := replace(l_js_code, '#report_region_id#', l_report_region_id);
         l_js_code := replace(l_js_code, '#p_request#', apex_javascript.add_attribute('p_request','PLUGIN=' || l_ajax_ident));
@@ -201,8 +320,73 @@ create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
         apex_javascript.add_inline_code(
             p_code => l_js_code
         );
-    
-        sys.htp.p('<div id="AjaxLoading" style="display:none;position:absolute;left:45%;top:45%;padding:10px;border:2px solid black;background:#FFF;" > Uploading..... <br /><img src="' || apex_application.g_image_prefix || 'processing3.gif" /></div>');
+                
+        apex_css.add(
+        
+            p_css => q'!
+            
+                #progressDialog {
+                    display: none;
+                }
+                
+                .progressDialog .ui-dialog-titlebar {
+                    display: none;
+                }
+                
+                .progressDialog {
+                
+                    margin-top: 100px;
+                
+                }
+                
+                .progressBar {
+                    margin-top: 20px;
+                    text-align: center;
+                    overflow: hidden;
+                    position: relative;
+                    vertical-align: middle;
+                    line-height: 35px;
+                }
+                
+                /*.ui-progressbar {
+                    position: relative;
+                }*/
+                
+                .progressLabel {
+                    float: left;
+                    width: 100%;
+                    height: 100%;
+                    position: absolute;
+                    vertical-align: middle;
+                }
+            
+            !'
+        
+        );
+       
+        apex_javascript.add_library(
+            p_name => 'jquery-1.11.1.min'
+          , p_directory => p_plugin.file_prefix  );
+          
+        apex_javascript.add_inline_code(
+            p_code => 'var uploaderJQuery = jQuery;'
+        );          
+        apex_javascript.add_library(
+            p_name => 'jquery-ui.min'
+          , p_directory => p_plugin.file_prefix  );  
+        apex_css.add_file(
+            p_name => 'jquery-ui.min'
+          , p_directory => p_plugin.file_prefix  
+        );
+        
+        sys.htp.p('
+        <div id="progressDialog">
+            <div id="progressLabel">Uploading <span id="totalNumFiles">0</span> file(s)</div>
+            <div id="individualProgress">
+            
+            </div>
+            <div id="totalProgressBar" class="progressBar"><div class="progressLabel">Overall Progress</div></div>
+        </div>');        
         sys.htp.p('<input type="file" id="' || p_item.name || '" value="' || p_value || '" multiple />');
         sys.htp.p('
     
@@ -239,7 +423,7 @@ create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
         c_foreign_key_val_replace constant varchar2(5) := ',:4';       
         
         C_FIRST_PIECE CONSTANT NUMBER := 0;
-        C_FILE_PIECES_LIMIT CONSTANT NUMBER := 10;
+        C_FILE_PIECES_LIMIT CONSTANT NUMBER := 30;
          
     
         --dynamic SQL
@@ -279,7 +463,6 @@ create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
         l_error varchar2(4000);
         
     BEGIN
-    
         l_filename := apex_application.g_x01;
         l_mime_type := apex_application.g_x02;
         l_post_index := apex_application.g_x03;
@@ -287,6 +470,13 @@ create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
         l_file_index := apex_application.g_x05;
         
         l_collection_name := COLLECTION_NAME||l_file_index;
+        
+        if l_current_cmd = CANCEL_CMD
+        then
+            apex_collection.delete_collection(l_collection_name);
+            
+            return l_result;
+        end if;
     
         dbms_lob.createtemporary(l_data_chunk, false);
         
@@ -300,6 +490,8 @@ create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
             );
         
         END LOOP;
+        
+        
         
         if l_post_index = C_FIRST_PIECE
         then
@@ -351,18 +543,18 @@ create or replace PACKAGE BODY APEX_AJAX_UPLOAD AS
             
             l_blob := apex_web_service.clobbase642blob(get_binary_data(l_whole_data));
             
-            IF l_foreign_key_item IS NOT NULL THEN --replace substitutions with actual values
+            IF l_foreign_key_item IS NOT NULL THEN 
                 l_insert_stmt := REPLACE(l_insert_stmt, c_foreign_key_col, c_foreign_key_col_replace);
                 l_insert_stmt := REPLACE(l_insert_stmt, c_foreign_key_val, c_foreign_key_val_replace);
                 execute immediate l_insert_stmt using apex_application.g_x01, apex_application.g_x02, l_blob, v(l_foreign_key_item);
-            ELSE --replace with empty strings
+            ELSE 
                 l_insert_stmt := REPLACE(l_insert_stmt, c_foreign_key_col, '');
                 l_insert_stmt := REPLACE(l_insert_stmt, c_foreign_key_val, '');
                 execute immediate l_insert_stmt using apex_application.g_x01, apex_application.g_x02, l_blob;
             END IF;
             
             apex_collection.delete_collection(l_collection_name);
-            
+         
         end if;
         
         
