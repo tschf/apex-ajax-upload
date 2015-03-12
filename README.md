@@ -1,4 +1,4 @@
-apex-ajax-upload
+AJAX File Upload
 ================
 
 This is a plugin for Oracle Application Express, to be able to upload files (with the ability to upload multiple in one hit) using AJAX.
